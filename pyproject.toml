@@ -1,0 +1,27 @@
+[project]
+name = "kb-0624"
+version = "0.1.0"
+description = "Add your description here"
+authors = [
+    { name = "SamSu1029", email = "1305669102@qq.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "colorlog>=6.12.0",
+    "fastapi>=0.141.1",
+    "grandalf>=0.8",
+    "langchain>=1.4.0",
+    "langchain-openai>=1.6.0",
+    "langgraph>=1.2.11",
+    "minio>=7.2.20",
+    "numpy>=2.5.2",
+    "pymongo>=4.18.0",
+    "python-dotenv>=1.2.3",
+]
+
+[project.scripts]
+kb-0624 = "kb_0624:main"
+
+[build-system]
+requires = ["uv_build>=0.12.10,<0.13.0"]
+build-backend = "uv_build"
