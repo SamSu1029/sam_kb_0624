@@ -1,3 +1,5 @@
+
+
 def test(a,b):
     try:
         if a==0:
@@ -8,9 +10,9 @@ def test(a,b):
         print("数据有误", e)
 
 
-print(test(0, 4))
 
-def test(a,b):
+
+def test1(a,b):
     try:
         if a==0:
             raise ValueError("a不能为0")
@@ -18,3 +20,8 @@ def test(a,b):
 
     except Exception as e:
         print("数据有误", e)
+
+if __name__ == "__main__":
+    main()
+
+

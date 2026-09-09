@@ -1,5 +1,7 @@
+from ast import main
 import base64
 import os
+from pyexpat import errors
 import re
 import time
 from collections import deque
@@ -36,7 +38,7 @@ class NodeMDImg(NodeBase):
             raise Exception("md路径不存在")
 
         # 2. 根据文件md_path得到文件内容,判断md文件是否有内容
-        with open(md_path_obj, 'r', encoding='utf-8') as f:
+        with open(md_path_obj, "r", encoding="utf-8") as f:
             md_content = f.read()
         if not md_content:
             logger.error("md文件内容为空")
@@ -80,16 +82,20 @@ class NodeMDImg(NodeBase):
             start_index, end_index = match.span()
 
             # 5-4：切片找到图片的上文和下文
-            pre_content = md_content[max(0, start_index - MAX_CONTENT_LENGTH):start_index]
-            post_content = md_content[end_index:end_index + MAX_CONTENT_LENGTH]
+            pre_content = md_content[
+                max(0, start_index - MAX_CONTENT_LENGTH) : start_index
+            ]
+            post_content = md_content[end_index : end_index + MAX_CONTENT_LENGTH]
 
             # 5-5：循环外部定义图片列表，把每个图片整理成字典：image_name  image_path(组装)  pre_text  post_text 追加到列表
-            images_with_content_list.append({
-                "image_name": image_name,
-                "image_path": str(images_dir_path_obj / image_name),
-                "pre_content": pre_content,
-                "post_content": post_content
-            })
+            images_with_content_list.append(
+                {
+                    "image_name": image_name,
+                    "image_path": str(images_dir_path_obj / image_name),
+                    "pre_content": pre_content,
+                    "post_content": post_content,
+                }
+            )
 
         # 6.模型生成摘要：
         # 6-1： 配置模型参数,模型厂商是阿里云百练,写在.env当中，全部做成配置类
@@ -112,7 +118,7 @@ class NodeMDImg(NodeBase):
         images_with_summary_list = []
         # 循环遍历图片列表
         for images_with_context in images_with_content_list:
-            current_time = time.time() # 循环内定义当前时间
+            current_time = time.time()  # 循环内定义当前时间
             # 1. 清理滑动窗口外的过期请求时间戳，保证队列仅存窗口内的请求
             while dq and current_time - dq[0] > 60:
                 dq.popleft()
@@ -141,27 +147,30 @@ class NodeMDImg(NodeBase):
                                 "url": f"data:image/jpeg;base64,{image_data_base64}"
                             },
                         },
-                        {"type": "text", "text": f"""这是一张图片，图片上文部分为"{images_with_context.get("pre_content")}"，
+                        {
+                            "type": "text",
+                            "text": f"""这是一张图片，图片上文部分为"{images_with_context.get("pre_content")}"，
                                                     下文部分为"{images_with_context.get("post_content")}"，
-                                                    请用中文简要总结这张图片的摘要,字数在50字以内。"""},
+                                                    请用中文简要总结这张图片的摘要,字数在50字以内。""",
+                        },
                     ],
                 },
             ]
-            res=vlm.invoke(messages)
-            images_with_summary_list.append({
-                "image_name": images_with_context.get("image_name"),
-                "image_path": images_with_context.get("image_path"),
-                "summary": res.content
-            })
+            res = vlm.invoke(messages)
+            images_with_summary_list.append(
+                {
+                    "image_name": images_with_context.get("image_name"),
+                    "image_path": images_with_context.get("image_path"),
+                    "summary": res.content,
+                }
+            )
 
-
-        # 上传图片到minio，自己构造图片的线上url，放到列表中
+        # 生成图片线上url（替换内容当中的图片摘要和url）
+        # 1.上传图片到minio，替换原文的图片地址为minio的地址
         minio_client = get_minio_client()
         bucket_name = MinIoConfig.minio_bucket_name
         upload_dir = MinIoConfig.minio_img_dir
-
-
-        #幂等性删除这个目录中的图片，防止重复上传
+        # 幂等性清理旧数据（去除冗余数据，别出现相同的图片）参考官网github案例
         delete_object_list = map(
             lambda x: DeleteObject(x.object_name),
             minio_client.list_objects(
@@ -177,58 +186,37 @@ class NodeMDImg(NodeBase):
         for error in errors:
             print("error occurred when deleting object", error)
 
-        # 构造添加url的字典写入列表
-        images_with_summary_and_url_list = []
+        # 循环遍历上传图片fput_object，注意参数 object文件名不带桶的名字，只是上传目录 + 文件名字
+        images_with_summary_and_url_list=[]
         for images_with_summary in images_with_summary_list:
-            # 上传本地图片到minio
             result = minio_client.fput_object(
                 bucket_name=bucket_name,
-                object_name=f"{upload_dir}/{images_with_summary.get('image_name')}",
+                object_name=upload_dir + "/" + images_with_summary.get("image_name"),
                 file_path=images_with_summary.get("image_path"),
             )
-
-
             images_with_summary_and_url_list.append({
                 **images_with_summary,
                 "image_url": f"http://{MinIoConfig.minio_endpoint}/{bucket_name}/{upload_dir}/{images_with_summary.get('image_name')}"
             })
 
-
-        # 遍历图片列表
+        # 2.循环遍历图片列表，替换md_content当中的图片地址为minio的地址
         for images_with_summary_and_url in images_with_summary_and_url_list:
             # 替换md内容，即用图片摘要作为 [alt] 文本，用远程 URL 替代原来的本地路径 ![](images/677a08ee041965bbbdb6b483d6c17d5aaa36a26b6dc96870a2019f0307b8616f.jpg)
             pattern = re.compile(r"!\[.*?\]\(.*?" + re.escape(images_with_summary_and_url.get("image_name")) + r"\)")
-            md_content = pattern.sub(
-                lambda _: f"![{images_with_summary_and_url.get('summary')}]({images_with_summary_and_url.get('image_url')})",
+            md_content=pattern.sub(
+                lambda match: f"![{images_with_summary_and_url.get('summary')}]({images_with_summary_and_url.get('image_url')})",
                 md_content
             )
-        # 将替换后的新内容写入新文件
-        new_md_path_obj = md_path_obj.parent / f"{md_path_obj.stem}_new.md"
+        new_md_path_obj=md_path_obj.parent / f"{md_path_obj.stem}_new.md"
+        with open(new_md_path_obj, "w", encoding="utf-8") as f:
+            f.write(md_content) 
 
-        with open(new_md_path_obj, 'w', encoding='utf-8') as f:
-            f.write(md_content)
-
-
-        
-
-        return {"md_content": md_content,
-                "md_path": str(new_md_path_obj)}
+        return {"md_content": md_content, "md_path": str(new_md_path_obj)}
 
 
-
-
-
-
-
-
-
-
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     node = NodeMDImg()
-    state = {
-        "md_path": r"D:\data\output\hak180产品安全手册\hak180产品安全手册.md"
-    }
+    state = {"md_path": r"D:\data\output\hak180产品安全手册\hak180产品安全手册.md"}
     res = node(state)
     logger.info(res)
 """
@@ -236,7 +224,7 @@ if __name__ == '__main__':
 """
 """
 delete_object_list = map(
-    lambda x: DeleteRequest.Object(x.object_name),
+    lambda x: DeleteObject(x.object_name),
     client.list_objects(
         bucket_name="my-bucket",
         prefix="my/prefix/",
@@ -245,7 +233,7 @@ delete_object_list = map(
 )
 errors = client.remove_objects(
     bucket_name="my-bucket",
-    objects=delete_object_list,
+    delete_object_list=delete_object_list,
 )
 for error in errors:
     print("error occurred when deleting object", error)

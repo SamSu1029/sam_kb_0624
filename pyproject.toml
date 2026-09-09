@@ -12,6 +12,7 @@ dependencies = [
     "grandalf>=0.8",
     "langchain>=1.4.0",
     "langchain-openai>=1.6.0",
+    "langchain-text-splitters>=1.1.2",
     "langgraph>=1.2.11",
     "minio>=7.2.20",
     "numpy>=2.5.2",

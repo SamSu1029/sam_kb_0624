@@ -9,24 +9,32 @@ import os
 env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.env"))
 load_dotenv(dotenv_path=env_path, override=True)
 
+def get_required_env(name: str) -> str:
+    value = os.getenv(name)
+    if value is None:
+        raise RuntimeError(f"未找到该环境变量: {name}")
+    return value
+
 
 class MineruConfig:
-    mineru_token =os.getenv("MINERU_TOKEN")
-    mineru_base_url = os.getenv("MINERU_BASE_URL")
+    mineru_token =get_required_env("MINERU_TOKEN")
+    mineru_base_url = get_required_env("MINERU_BASE_URL")
 
 
 class LLMConfig:
-    openai_api_key = os.getenv("OPENAI_API_KEY")
-    openai_api_base = os.getenv("OPENAI_API_BASE")
-    llm_default_model = os.getenv("LLM_DEFAULT_MODEL")
-    llm_default_temperature = float(os.getenv("LLM_DEFAULT_TEMPERATURE"))
-    vl_model = os.getenv("VL_MODEL")
-    item_model = os.getenv("ITEM_MODEL")
+    openai_api_key = get_required_env("OPENAI_API_KEY")
+    openai_api_base = get_required_env("OPENAI_API_BASE")
+    llm_default_model = get_required_env("LLM_DEFAULT_MODEL")
+    llm_default_temperature = float(get_required_env("LLM_DEFAULT_TEMPERATURE"))
+    vl_model = get_required_env("VL_MODEL")
+    item_model = get_required_env("ITEM_MODEL")
 
 
 class MinIoConfig:
-    minio_endpoint = os.getenv("MINIO_ENDPOINT")
-    minio_access_key = os.getenv("MINIO_ACCESS_KEY")
-    minio_secret_key = os.getenv("MINIO_SECRET_KEY")
-    minio_bucket_name = os.getenv("MINIO_BUCKET_NAME")
-    minio_img_dir = os.getenv("MINIO_IMG_DIR")
+    minio_endpoint = get_required_env("MINIO_ENDPOINT")
+    minio_access_key = get_required_env("MINIO_ACCESS_KEY")
+    minio_secret_key = get_required_env("MINIO_SECRET_KEY")
+    minio_bucket_name = get_required_env("MINIO_BUCKET_NAME")
+    minio_img_dir = get_required_env("MINIO_IMG_DIR")
+
+
