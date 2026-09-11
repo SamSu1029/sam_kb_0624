@@ -18,6 +18,13 @@ dependencies = [
     "numpy>=2.5.2",
     "pymongo>=4.18.0",
     "python-dotenv>=1.2.3",
+    "torch>=2.11.0",
+    "torchvision>=0.26.0",
+    "torchaudio>=2.11.0",
+    "flagembedding>=1.3.5",
+    "transformers>=4.45.0,<5.0.0",
+    "pymilvus[model]>=3.0.1",
+    "modelscope>=1.40.0",
 ]
 
 [project.scripts]
@@ -26,3 +33,16 @@ kb-0624 = "kb_0624:main"
 [build-system]
 requires = ["uv_build>=0.12.10,<0.13.0"]
 build-backend = "uv_build"
+
+
+#要求下载从哪里下，不需要背
+[tool.uv.sources]
+# 强制从 NVIDIA 源安装
+torch = { index = "pytorch-cuda" }
+torchvision = { index = "pytorch-cuda" }
+torchaudio = { index = "pytorch-cuda" }
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
