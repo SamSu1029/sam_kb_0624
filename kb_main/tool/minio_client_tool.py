@@ -44,3 +44,7 @@ def get_minio_client():
             raise e
     return minio_client
 
+if __name__ == "__main__":
+    get_minio_client()
+    print("****")
+

@@ -36,14 +36,14 @@ class NodeMDImg(NodeBase):
             logger.error("md路径不存在")
             raise Exception("md路径不存在")
         # 2. 根据文件md_path得到文件内容,判断md文件是否有内容
-        with open(md_path_obj, 'r', encoding='utf-8') as f:
+        with open(md_path_obj, "r", encoding="utf-8") as f:
             md_content = f.read()
         if not md_content:
             logger.error("md文件内容为空")
             raise Exception("md文件内容为空")
         return md_content, md_path_obj
 
-    def check_images_dir_and_content(self, md_content,md_path_obj):
+    def check_images_dir_and_content(self, md_content, md_path_obj):
         # 3. 根据md_path的Path对象.parent / images组装文件夹的路径对象进行非空校验
         # 如果不存在，直接返回md_content
         images_dir_path_obj = md_path_obj.parent / "images"
@@ -57,9 +57,11 @@ class NodeMDImg(NodeBase):
         if not images_dir_content_list:
             logger.warning(f"图片目录为空:{images_dir_path_obj}")
             return None
-        return images_dir_path_obj,images_dir_content_list
+        return images_dir_path_obj, images_dir_content_list
 
-    def get_images_with_content_list(self, images_dir_content_list, images_dir_path_obj, md_content):
+    def get_images_with_content_list(
+        self, images_dir_content_list, images_dir_path_obj, md_content
+    ):
         """获取图片携带上下文"""
         # 5.遍历图片名称的列表
         IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
@@ -85,92 +87,103 @@ class NodeMDImg(NodeBase):
             start_index, end_index = match.span()
 
             # 5-4：切片找到图片的上文和下文
-            pre_content = md_content[max(0, start_index - MAX_CONTENT_LENGTH):start_index]
-            post_content = md_content[end_index:end_index + MAX_CONTENT_LENGTH]
+            pre_content = md_content[
+                max(0, start_index - MAX_CONTENT_LENGTH) : start_index
+            ]
+            post_content = md_content[end_index : end_index + MAX_CONTENT_LENGTH]
 
             # 5-5：循环外部定义图片列表，把每个图片整理成字典：image_name  image_path(组装)  pre_text  post_text 追加到列表
-            images_with_content_list.append({
-                "image_name": image_name,
-                "image_path": str(images_dir_path_obj / image_name),
-                "pre_content": pre_content,
-                "post_content": post_content
-            })
+            images_with_content_list.append(
+                {
+                    "image_name": image_name,
+                    "image_path": str(images_dir_path_obj / image_name),
+                    "pre_content": pre_content,
+                    "post_content": post_content,
+                }
+            )
         return images_with_content_list
 
     def get_images_with_summary_list(self, images_with_content_list):
-            # 6.模型生成摘要：
-            # 6-1： 配置模型参数,模型厂商是阿里云百练,写在.env当中，全部做成配置类
-            vlm = init_chat_model(
-                model=LLMConfig.vl_model,
-                model_provider="openai",
-                api_key=LLMConfig.openai_api_key,
-                base_url=LLMConfig.openai_api_base,
-                temperature=LLMConfig.llm_default_temperature,
-                request_timeout=120,
-            )
-            # 6-2：设计算法滑动门限定频率
-            a62 = """
+        # 6.模型生成摘要：
+        # 6-1： 配置模型参数,模型厂商是阿里云百练,写在.env当中，全部做成配置类
+        vlm = init_chat_model(
+            model=LLMConfig.vl_model,
+            model_provider="openai",
+            api_key=LLMConfig.openai_api_key,
+            base_url=LLMConfig.openai_api_base,
+            temperature=LLMConfig.llm_default_temperature,
+            request_timeout=120,
+        )
+        # 6-2：设计算法滑动门限定频率
+        a62 = """
             准备双向队列 deque()
     			队列当中保存的是请求的时间戳
     				思想：
     					队列当中保留的是1分钟内发送的请求，超过1分钟的请求要出队
     					队列当中保留的请求最大是30个，可以自己设定
             """
-            dq = deque(maxlen=30)
-            images_with_summary_list = []     
-            # 循环遍历图片列表
-            for images_with_context in images_with_content_list:
-                current_time = time.time()  # 循环内定义当前时间
-                # 1. 清理滑动窗口外的过期请求时间戳，保证队列仅存窗口内的请求
+        dq = deque(maxlen=30)
+        images_with_summary_list = []
+        # 循环遍历图片列表
+        for images_with_context in images_with_content_list:
+            current_time = time.time()  # 循环内定义当前时间
+            # 1. 清理滑动窗口外的过期请求时间戳，保证队列仅存窗口内的请求
+            while dq and current_time - dq[0] > 60:
+                dq.popleft()
+            # 2. 窗口内请求数达上限，计算并阻塞等待剩余时间,阻塞后清理过期时间,需要获取新的当前时间戳 current_time
+            if len(dq) == dq.maxlen:
+                wait_time = 60 - (current_time - dq[0])
+                time.sleep(wait_time)
+                current_time = time.time()
                 while dq and current_time - dq[0] > 60:
                     dq.popleft()
-                # 2. 窗口内请求数达上限，计算并阻塞等待剩余时间,阻塞后清理过期时间,需要获取新的当前时间戳 current_time
-                if len(dq) == dq.maxlen:
-                    wait_time = 60 - (current_time - dq[0])
-                    time.sleep(wait_time)
-                    current_time = time.time()
-                    while dq and current_time - dq[0] > 60:
-                        dq.popleft()
-                # 3. 记录当前请求时间戳，加入滑动窗口队列
-                dq.append(current_time)
-                # 4. base64编码处理图片，使用LLM和提示词生成图片摘要,调用模型传递的用户消息，可以参考qwen3-vl-flash模型的api
-                image_path=images_with_context.get("image_path")
-                with open(image_path, "rb") as f:
-                    image_data = f.read()
-                    image_data_base64 = base64.b64encode(image_data).decode("utf-8")
-                # 5. 循环外部定义图片列表，调大模型，根据提示词生成摘要summary，把每个图片整理成字典：image_name  image_path(组装)  summary 追加到列表
-                # 根据图片实际后缀获取正确的MIME类型
-                mime_type = mimetypes.guess_type(image_path)[0] or "image/jpeg"
-                messages = [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    # 这个格式是base64格式规定的
-                                    "url": f"data:{mime_type};base64,{image_data_base64}"
-                                },
+            # 3. 记录当前请求时间戳，加入滑动窗口队列
+            dq.append(current_time)
+            # 4. base64编码处理图片，使用LLM和提示词生成图片摘要,调用模型传递的用户消息，可以参考qwen3-vl-flash模型的api
+            image_path = images_with_context.get("image_path")
+            with open(image_path, "rb") as f:
+                image_data = f.read()
+            image_data_base64 = base64.b64encode(image_data).decode("utf-8")
+            # 5. 循环外部定义图片列表，调大模型，根据提示词生成摘要summary，把每个图片整理成字典：image_name  image_path(组装)  summary 追加到列表
+            # 根据图片实际后缀获取正确的MIME类型
+            mime_type = mimetypes.guess_type(image_path)[0] or "image/jpeg"
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                # 这个格式是base64格式规定的
+                                "url": f"data:{mime_type};base64,{image_data_base64}"
                             },
-                            {"type": "text",
-                             "text": f"""这是一张图片，图片上文部分为"{images_with_context.get("pre_content")}"，
+                        },
+                        {
+                            "type": "text",
+                            "text": f"""这是一张图片，图片上文部分为"{images_with_context.get("pre_content")}"，
                                          下文部分为"{images_with_context.get("post_content")}"，
-                                         请用中文简要总结这张图片的摘要,字数在50字以内。"""},
-                        ],
-                    },
-                ]
-                try:
-                    res = vlm.invoke(messages)
-                    summary = res.content
-                except Exception as e:
-                    logger.error(f"图片摘要生成失败：{images_with_context.get('image_name')}，错误：{e}")
-                    summary = "图片摘要生成失败"
-                images_with_summary_list.append({
+                                         请用中文简要总结这张图片的摘要,字数在50字以内。""",
+                        },
+                    ],
+                },
+            ]
+            try:
+                res = vlm.invoke(messages)
+                summary = res.content
+            except Exception as e:
+                logger.error(
+                    f"图片摘要生成失败：{images_with_context.get('image_name')}，错误：{e}"
+                )
+                summary = "图片摘要生成失败"
+            images_with_summary_list.append(
+                {
                     "image_name": images_with_context.get("image_name"),
                     "image_path": image_path,
-                    "summary": summary
-                })
-            return images_with_summary_list
+                    "summary": summary,
+                }
+            )
+        return images_with_summary_list
+
     def get_image_with_summary_and_url_list(self, images_with_summary_list):
         # 上传图片到minio，自己构造图片的线上url，放到列表中
         minio_client = get_minio_client()
@@ -199,29 +212,38 @@ class NodeMDImg(NodeBase):
                 bucket_name=bucket_name,
                 object_name=f"{upload_dir}/{images_with_summary.get('image_name')}",
                 file_path=images_with_summary.get("image_path"),
+                
             )
-            images_with_summary_and_url_list.append({
-                **images_with_summary,
-                "image_url": f"http://{MinIoConfig.minio_endpoint}/{bucket_name}/{upload_dir}/{images_with_summary.get('image_name')}"
-            })
+            images_with_summary_and_url_list.append(
+                {
+                    **images_with_summary,
+                    "image_url": f"http://{MinIoConfig.minio_endpoint}/{bucket_name}/{upload_dir}/{images_with_summary.get('image_name')}",
+                }
+            )
         return images_with_summary_and_url_list
-    def replace_md_images(self, md_content, md_path_obj,images_with_summary_and_url_list):
+
+    def replace_md_images(
+        self, md_content, md_path_obj, images_with_summary_and_url_list
+    ):
         # 遍历图片列表
         for images_with_summary_and_url in images_with_summary_and_url_list:
             # 替换md内容，即用图片摘要作为 [alt] 文本，用远程 URL 替代原来的本地路径 ![](images/677a08ee041965bbbdb6b483d6c17d5aaa36a26b6dc96870a2019f0307b8616f.jpg)
-            pattern = re.compile(r"!\[.*?\]\(.*?" + re.escape(images_with_summary_and_url.get("image_name")) + r"\)")
+            pattern = re.compile(
+                r"!\[.*?\]\(.*?"
+                + re.escape(images_with_summary_and_url.get("image_name"))
+                + r"\)"
+            )
             md_content = pattern.sub(
-                lambda
-                    x: f"![{images_with_summary_and_url.get('summary')}]({images_with_summary_and_url.get('image_url')})",
-                md_content
+                lambda x: (
+                    f"![{images_with_summary_and_url.get('summary')}]({images_with_summary_and_url.get('image_url')})"
+                ),
+                md_content,
             )
         # 将替换后的新内容写入新文件
         new_md_path_obj = md_path_obj.parent / f"{md_path_obj.stem}_new.md"
-        with open(new_md_path_obj, 'w', encoding='utf-8') as f:
+        with open(new_md_path_obj, "w", encoding="utf-8") as f:
             f.write(md_content)
         return md_content, new_md_path_obj
-
-
 
     def process(self, state: ImportGraphState):
         # 1. 校验MD文件路径和内容的有效性，获取MD文件内容和路径对象
@@ -234,30 +256,33 @@ class NodeMDImg(NodeBase):
         images_dir_path_obj, images_dir_content_list = result
 
         # 3. 遍历图片列表，校验格式和引用关系，提取每张图片在MD中的上下文（前后250字）
-        images_with_content_list = self.get_images_with_content_list(images_dir_content_list, images_dir_path_obj,
-                                                                     md_content)
+        images_with_content_list = self.get_images_with_content_list(
+            images_dir_content_list, images_dir_path_obj, md_content
+        )
         if not images_with_content_list:
             logger.warning("无有效图片需要处理")
             return {"md_content": md_content}
 
         # 4. 调用VLM多模态模型为每张图片生成中文摘要（含滑动窗口限流）
-        images_with_summary_list = self.get_images_with_summary_list(images_with_content_list)
+        images_with_summary_list = self.get_images_with_summary_list(
+            images_with_content_list
+        )
 
         # 5. 上传图片到minio，替换原文的图片地址为minio的地址
-        images_with_summary_and_url_list = self.get_image_with_summary_and_url_list(images_with_summary_list)
+        images_with_summary_and_url_list = self.get_image_with_summary_and_url_list(
+            images_with_summary_list
+        )
 
         # 6. 替换完成把新的内容存入物理文件，下一个节点测试使用
-        md_content, new_md_path_obj = self.replace_md_images(md_content, md_path_obj, images_with_summary_and_url_list)
-        return {
-            "md_content": md_content,
-            "md_path": new_md_path_obj
-        }
+        md_content, new_md_path_obj = self.replace_md_images(
+            md_content, md_path_obj, images_with_summary_and_url_list
+        )
+        return {"md_content": md_content, "md_path": new_md_path_obj}
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     node = NodeMDImg()
-    state = {
-        "md_path": r"D:\data\output\hak180产品安全手册\hak180产品安全手册.md"
-    }
+    state = {"md_path": r"D:\data\output\hak180产品安全手册\hak180产品安全手册.md"}
     res = node(state)
     logger.info(res)
 
