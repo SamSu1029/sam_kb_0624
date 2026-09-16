@@ -1,147 +1,161 @@
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-
-from kb_main.import_process.base import NodeBase
-from kb_main.import_process.state import ImportGraphState
-from kb_main.tool.logger import logger
-from kb_main.tool.json_format_tool import json_format
 from pathlib import Path
 import re
 
+from kb_main.tool.json_format_tool import json_format
+from kb_main.tool.logger import logger
+from kb_main.import_process.base import NodeBase
+from kb_main.import_process.state import ImportGraphState
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+
+# 输入 md_path file_title 输出chunks_list
 class NodeDocumentSplit(NodeBase):
     """
     文档切分节点：智能文档切片
+    接收:md_path,file_title
+    输出:chunks_list，带有标题、内容、文件标题
     """
 
     name = "node_document_split"
 
-    def get_md_content(self,state):
-        md_path = state.get("md_path", "")
-        if not md_path:
-            logger.error("md_path路径未提供")
-            raise ValueError("md_path路径未提供")
-        md_path_obj = Path(md_path)
-        if not md_path_obj.exists():
-            logger.error("md_path路径不存在")
-            raise ValueError("md_path路径不存在")
-        file_title = state.get("file_title", "")
-        if not file_title:
-            file_title = md_path_obj.stem
-        
-        # 读取行一个node处理的md_content
-        with open(md_path_obj, "r", encoding="utf-8") as f:
-            md_content = f.read()
-        if not md_content:
-            logger.error("md文件内容为空")
-            raise ValueError("md文件内容为空")
-        
-        md_content = md_content.replace("\r\n", "\n").replace("\r", "\n")
-        return md_content,file_title,md_path_obj
+    def process(self, state: ImportGraphState):
+        #1、防御性校验，统一分隔符
+        file_title, md_content, md_path_obj = self.process_md_content(state)
+        #2、按行切分然后拼接，得到章节内容列表，最后同行标题和文件标题一并封装为字典，得到章节列表
+        section_list = self.get_section_list(file_title, md_content)
+        #3、将章节内容列表中的每个章节内容，用切分器切分，得到最终的chunks
+        final_chunks_list = self.get_chunks_list(file_title, md_path_obj, section_list)
 
-    def get_section_list(self,md_content,file_title):
-        md_line_list = md_content.split("\n")
+        return {"chunks": final_chunks_list}
+
+    def get_chunks_list(self, file_title, md_path_obj, section_list):
+        final_chunks_list = []
+        max_chunk_size = 300
+        # 文档切分，短章节及表格不做处理，超长章节要用切分器切分
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=max_chunk_size,
+            chunk_overlap=30,
+            # length_function=len,
+            # 有图片内容，标识符不可以为图片标题中的符号
+            separators=["\n\n", "\n", "。", "！", "？", "；", "!", "?", ";", " "]
+        )
+        # 遍历上一步生成的章节内容
+        for section in section_list:
+            # 要先拿到章节内容中不包含标题的内容
+            section_content = section.get("content")
+            title = section.get("title")
+            if section_content.startswith('#'):
+                first_newline = section_content.find('\n')
+                real_content = section_content[first_newline + 1:] if first_newline != -1 else section_content
+            else:
+                real_content = section_content
+
+            # 短内容及表格不做处理
+            if len(real_content) < max_chunk_size or '<table' in real_content:
+                final_chunks_list.append({
+                    **section,
+                    "part": 0
+                })
+            else:
+                chunks = splitter.split_text(real_content)
+                for idx, chunk in enumerate(chunks, start=1):
+                    final_chunks_list.append({
+                        "title": title,
+                        "content": title + '\n\n' + chunk,
+                        "file_title": file_title,
+                        "part":idx
+                    })
+        # 备份一份到本地
+        backup_path = md_path_obj.parent / f"{md_path_obj.stem}_backup.json"
+        with open(backup_path, "w", encoding="utf-8") as f:
+            f.write(json_format(final_chunks_list))
+            logger.info(f"备份文件已保存到 {backup_path}")
+        return final_chunks_list
+
+    def get_section_list(self, file_title, md_content):
+        # 文档切分，先按行切分
+        line_split_list = md_content.split("\n")
         
-        # 按照标题合并，需要遍历列表找标题，这里需要明确标题是#开头的，而且要排除代码块中的#
-        # 所以第一步需要判断是否是代码块当中的#，如果不是才能进行下一步操作
-        # 代码块是以~~~或```开头和结尾的，需要正则判断，而且还要看开头和结尾是否一致
+        # 将同一标题行下的内容拼接到一起
+        # 需要判断行是否在代码块内，以及是否是标题行
+        # 构造代码块正则及标题行正则
         code_pattern = r"^(`{3,}|~{3,})"  # 代码块正则
         title_pattern = r"^\s*#{1,6}\s+.+"  # 标题正则
-        is_in_block = False  # 是否在代码块内标识
-        marker = None  # 代码块开头标识 ~~~或```
-        
-        section_list = []
+        # 需要判断行是否在代码块内，以及代码块开始标识（~|`）
+        in_code_block = False
+        marker = None
+        # 需要记录当前标题行在line_split_list中的索引
         current_index = 0
-        
-        for idx, line in enumerate(md_line_list):
+        section_list = []  # 存储章节内容
+        # 遍历行切分后的内容列表
+        for idx, line in enumerate(line_split_list):
             line = line.strip()
-            # 判断是否匹配代码块
             code_match = re.match(code_pattern, line)
-            if code_match:
-                # 能匹配到还分两种情况，是开头，是结尾，判断下
-                if not is_in_block:  # 是开头
-                    marker = code_match.group(1)  # 匹配的字符
-                    is_in_block = True
-                    logger.info(f"代码块开始{marker}")
-                else:  # 是结尾，还要看结尾是否与开头匹配
-                    if marker == code_match.group(1):
-                        logger.info(f"代码块结束{marker}")
-                        is_in_block = False
-                        marker = None
-        
-            # 不在代码块中,判断是不是标题，如果是就处理，不是就不用处理
-            # 如何处理呢，这一步的目的是获取同一个标题的内容，连同标题和文件title一起组装成字典存起来
             title_match = re.match(title_pattern, line)
-            if not is_in_block and title_match:
-                # 核心方法是定义一个标题的初始下标0，然后每次出现标题后，将上一个标题下标到本次之前的内容从md_line_list取出来在拼接，然后更新初始下标
-                split_title_list = md_line_list[current_index:idx]
-                if split_title_list:
-                    title_content = "\n".join(split_title_list)
-                    section_dict = {
-                        "title": split_title_list[0]
-                        if title_content.startswith("#")
-                        else "无标题",
-                        "content": title_content,
+
+            # 是否是代码块开始或结束行
+            if code_match:
+                # 如果是，判断行是否在代码块内
+                if in_code_block:
+                    # 如果是，判断是否和代码块开始标识一致
+                    if marker == code_match.group(1):
+                        # 一致，是结束行，并且重置代码块标识
+                        logger.info(f"该行是代码块结束，标识{marker}")
+                        marker = None
+                        in_code_block = False
+                # 如果不在代码块内，是开始行，并且设置代码块标识
+                else:
+                    logger.info(f"该行是代码块开始，标识{code_match.group(1)}")
+                    marker = code_match.group(1)
+                    in_code_block = True
+
+            # 是否是标题行
+            if not in_code_block and title_match:
+                # 是标题行，将上一个标题行下的内容拼接在一起
+                tmp_list = line_split_list[current_index:idx]
+                if tmp_list:
+                    section_content = "\n".join(tmp_list)
+                    section_list.append({
+                        "title": tmp_list[0] if section_content.startswith("#") else "无标题",
+                        "content": section_content,
                         "file_title": file_title
-                    }
-                    section_list.append(section_dict)
+                    })
                 current_index = idx
-        
-        
-        section_list.append({
-            "title": md_line_list[current_index],
-            "content": '\n'.join(md_line_list[current_index:]),
-            "file_title":file_title
+        # 最后一个标题内容
+        tmp_list = line_split_list[current_index:]
+        if tmp_list:
+            section_content = "\n".join(tmp_list)
+            section_list.append({
+                "title": tmp_list[0] if section_content.startswith("#") else "无标题",
+                "content": section_content,
+                "file_title": file_title
             })
         return section_list
 
-    def get_final_section_list(self,section_list,md_path_obj,file_title):
-        max_length=300
-        over_lap=30
-        final_section_list=[]
-        
-        splitter=RecursiveCharacterTextSplitter(
-            separators=["\n\n", "\n", "。", "！", "？", "；", ".", "!", "?", ";", " "],
-            chunk_size=max_length,
-            chunk_overlap=over_lap
-        )
-        
-        for section in section_list:
-            content=section.get("content")
-            title=section.get("title")
-            real_content=content[len(title):] if content.startswith('#') else content
-        
-            if (len(real_content)<max_length) or ('<table' in real_content):
-                final_section_list.append({
-                    **section,
-                    "part":0
-                })
-        
-            split_chunk_list=splitter.split_text(real_content)
-            for index,chunk in enumerate(split_chunk_list,start=1):
-                final_section_list.append({
-                    "title":title,
-                    "content":title + '\n\n'+chunk,
-                    "file_title":file_title,
-                    "part":index
-        
-                })
-        with open(md_path_obj.parent / "chunks.json" ,'w',encoding='utf-8') as f:
-            f.write(json_format(final_section_list))
-
-        return final_section_list
-    
-    def process(self, state: ImportGraphState):
-        #第一大步：获取md文件内容，文件标题及路径，并进行校验
-        md_content,file_title,md_path_obj=self.get_md_content(state)
-
-        #第二大步：对md内容进行切割，先按行切，在根据标题合并，返回列表
-        section_list=self.get_section_list(md_content,file_title)
-
-        # 第三大步：长切短合，返回{"chunks":final_section_list}
-        final_section_list=self.get_final_section_list(section_list,md_path_obj,file_title)
-
-        
-        return {"chunks":final_section_list}
+    def process_md_content(self, state):
+        # 防御性检查
+        md_path = state.get("md_path", "")
+        if not md_path:
+            logger.error("md_path未上传")
+            raise Exception("md_path未上传")
+        md_path_obj = Path(md_path)
+        if not md_path_obj.exists():
+            logger.error("md_path路径不存在")
+            raise Exception("md_path路径不存在")
+        file_title = state.get("file_title", "")
+        if not file_title:
+            file_title = md_path_obj.stem
+            logger.info(f"没有file_title，传入md文件名: {md_path_obj.stem}")
+        # 读取文件内容
+        with open(md_path_obj, "r", encoding="utf-8") as f:
+            md_content = f.read()
+        # 检查文件内容是否为空
+        if not md_content:
+            logger.error("文件内容为空")
+            raise Exception("文件内容为空")
+        # 统一换行符
+        md_content = md_content.replace("\r\n", "\n").replace("\r", "\n")
+        return file_title, md_content, md_path_obj
 
 
 if __name__ == "__main__":

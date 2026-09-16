@@ -36,8 +36,9 @@ def get_bge_m3_embedding(texts: List[str]):
     #     print(dense_item,type(dense_item))
 
     # for sparse_item in embedding.get("sparse"):
-    #     # print(sparse_item,type(sparse_item))
-    #     print(sparse_item.__dict__)
+    #     print(sparse_item,type(sparse_item))
+    #     # print(sparse_item.__dict__)
+        
 
     # return {
     #     "dense":[list([float(item) for item in dense_item]) for dense_item in embedding.get("dense")],
@@ -62,4 +63,4 @@ def get_bge_m3_embedding(texts: List[str]):
 if __name__ == '__main__':
     texts = ["hello world", "hello milvus"]
     result = get_bge_m3_embedding(texts)
-    logger.info(json_format(result))
+    # logger.info(json_format(result))
