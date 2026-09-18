@@ -138,7 +138,8 @@ class MainGraphRunner:
         return runner.run(state)
 
 if __name__ == '__main__':
-    state = {"local_file_path": r"D:\data\output\hak180产品安全手册.pdf"}
+    state = {"local_file_path": r"D:\data\output\hak180产品安全手册.pdf",
+             "local_dir": r"D:\data\output"}
     res=MainGraphRunner.create_and_run(state)
     logger.info(json_format(res))
 

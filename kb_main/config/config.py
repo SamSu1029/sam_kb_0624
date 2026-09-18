@@ -45,3 +45,13 @@ class EmbeddingConfig:
     bge_device=get_required_env("BGE_DEVICE")
     # 特殊处理：将.env中的1/0转为布尔值，兼容常见的数字/字符串格式
     bge_fp16=get_required_env("BGE_FP16") in ("1", "True", "true", 1)
+
+class MilvusConfig:
+    milvus_url=get_required_env("MILVUS_URL")
+    chunks_collection=get_required_env("CHUNKS_COLLECTION")
+    item_name_collection=get_required_env("ITEM_NAME_COLLECTION")
+
+
+class MongoConfig:
+    mongo_url=get_required_env("MONGO_URL")
+    mongo_db_name=get_required_env("MONGO_DB_NAME")

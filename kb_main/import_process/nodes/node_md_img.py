@@ -184,7 +184,7 @@ class NodeMDImg(NodeBase):
             )
         return images_with_summary_list
 
-    def get_image_with_summary_and_url_list(self, images_with_summary_list):
+    def get_image_with_summary_and_url_list(self, images_with_summary_list,md_path_obj):
         # 上传图片到minio，自己构造图片的线上url，放到列表中
         minio_client = get_minio_client()
         bucket_name = MinIoConfig.minio_bucket_name
@@ -210,14 +210,14 @@ class NodeMDImg(NodeBase):
         for images_with_summary in images_with_summary_list:
             result = minio_client.fput_object(
                 bucket_name=bucket_name,
-                object_name=f"{upload_dir}/{images_with_summary.get('image_name')}",
+                object_name=f"{upload_dir}/{md_path_obj.stem}/{images_with_summary.get('image_name')}",
                 file_path=images_with_summary.get("image_path"),
                 
             )
             images_with_summary_and_url_list.append(
                 {
                     **images_with_summary,
-                    "image_url": f"http://{MinIoConfig.minio_endpoint}/{bucket_name}/{upload_dir}/{images_with_summary.get('image_name')}",
+                    "image_url": f"http://{MinIoConfig.minio_endpoint}/{bucket_name}/{upload_dir}/{md_path_obj.stem}/{images_with_summary.get('image_name')}",
                 }
             )
         return images_with_summary_and_url_list
@@ -270,14 +270,14 @@ class NodeMDImg(NodeBase):
 
         # 5. 上传图片到minio，替换原文的图片地址为minio的地址
         images_with_summary_and_url_list = self.get_image_with_summary_and_url_list(
-            images_with_summary_list
+            images_with_summary_list,md_path_obj
         )
 
         # 6. 替换完成把新的内容存入物理文件，下一个节点测试使用
         md_content, new_md_path_obj = self.replace_md_images(
             md_content, md_path_obj, images_with_summary_and_url_list
         )
-        return {"md_content": md_content, "md_path": new_md_path_obj}
+        return {"md_content": md_content, "md_path": str(new_md_path_obj)}
 
 
 if __name__ == "__main__":
